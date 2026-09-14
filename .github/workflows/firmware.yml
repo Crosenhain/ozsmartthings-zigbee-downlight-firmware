@@ -1,0 +1,52 @@
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "APP_BUILD 0-255 (11 -> 1.0.11). Empty = firmware/VERSION"
+        default: ""
+      reference_bin:
+        description: "Optional repo path the built image must match byte for byte"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04   # tc32 is an x86-64 Linux toolchain
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/dl41-build/tc32_gcc_v2.0.tar.bz2
+          key: tc32-gcc-v2.0-33b854be3e3db3dba4b4dacdda2cd4ea1c94dfd4d562864a095956de7991b430
+
+      - name: Build number
+        id: ver
+        env:
+          INPUT_BUILD: ${{ inputs.build_number }}
+        run: |
+          n=${INPUT_BUILD:-$(tr -d '[:space:]' < firmware/VERSION)}
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Host tests, build, image checks
+        env:
+          BUILD_NUMBER: ${{ steps.ver.outputs.n }}
+          REFERENCE_BIN: ${{ inputs.reference_bin }}
+        run: bash ci/build.sh "$BUILD_NUMBER" out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dl41_rgbcw_v1.0.${{ steps.ver.outputs.n }}-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30

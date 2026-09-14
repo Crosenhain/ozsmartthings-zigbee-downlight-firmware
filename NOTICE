@@ -1,0 +1,26 @@
+Oz Smart Things DL41 Zigbee downlight firmware
+Copyright 2026 the ozsmartthings-zigbee-downlight-firmware contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE), except where noted below.
+
+This product includes software developed by others:
+
+* zigbee-light-cct by nminaylov
+  https://github.com/nminaylov/zigbee-light-cct (commit f7441cb4be0f7294e2e175a03159239ef7827f9f)
+  Apache License, Version 2.0.
+  The files in firmware/src that start with "Modified from nminaylov/zigbee-light-cct" are modified
+  versions of files from that project. firmware/apply_patches.py applies further modifications to
+  upstream files (main.c, version_cfg.h, app_cfg.h, app.c, hw_variants.h, makefile, project.mk) at
+  build time. Release binaries are built from that patched tree.
+
+* Telink Zigbee SDK V3.7.2.0
+  Copyright (c) Telink Semiconductor (Shanghai) Co., Ltd.
+  Apache License, Version 2.0. Bundled with zigbee-light-cct and compiled into release binaries.
+
+* TlsrComSwireWriter by pvvx
+  https://github.com/pvvx/TlsrComSwireWriter
+  tools/tcsw/TLSR825xComFlasher.py is vendored from it and is released under the Unlicense
+  (see tools/tcsw/LICENSE). It is not covered by this project's Apache-2.0 licence.
+
+This repository and its releases contain no Tuya stock firmware. tools/make_ota.py can repackage a
+stock image that you dumped from your own device; do not redistribute such files.

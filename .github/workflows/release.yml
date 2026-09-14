@@ -1,0 +1,133 @@
+name: Release
+
+# Push an annotated tag v1.0.N (N = firmware/VERSION, on main) to build and publish a prerelease.
+# After testing on a light: gh release edit v1.0.N --prerelease=false --latest
+
+on:
+  push:
+    tags: ["v1.0.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing annotated tag, e.g. v1.0.11"
+        required: true
+        type: string
+      stage:
+        description: "prerelease = public assets, not latest; draft = private; release = latest"
+        type: choice
+        options: [prerelease, draft, release]
+        default: prerelease
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0              # all tags and the default branch, for the checks below
+          persist-credentials: false
+
+      - name: Derive and validate the build number
+        id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [[ "$TAG" =~ ^v1\.0\.([1-9][0-9]{0,2})$ ]] || fail "tag '$TAG' must be v1.0.N (decimal, no leading zeros)"
+          N=${BASH_REMATCH[1]}
+          (( N >= 1 && N <= 255 )) || fail "N=$N: APP_BUILD is one byte (1..255)"
+          (( N >= 10 )) || fail "N=$N: releases ship a from_tuya image, which needs 1.0.10+"
+          [[ -f firmware/VERSION ]] || fail "firmware/VERSION missing"
+          FILE_N=$(tr -d '[:space:]' < firmware/VERSION)
+          [[ "$FILE_N" == "$N" ]] || fail "firmware/VERSION is '$FILE_N' but the tag is $N: bump, commit, re-tag"
+          git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH" || fail "$TAG is not on $DEFAULT_BRANCH"
+          HIGHEST=$(git tag -l 'v1.0.*' | sed -nE 's/^v1\.0\.([0-9]+)$/\1/p' | sort -n | tail -1)
+          (( 10#$HIGHEST == N )) || fail "v1.0.$HIGHEST exists; Z2M only offers strictly higher versions"
+          { echo "tag=$TAG"; echo "n=$N"; echo "version=1.0.$N"; } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/dl41-build/tc32_gcc_v2.0.tar.bz2
+          key: tc32-gcc-v2.0-33b854be3e3db3dba4b4dacdda2cd4ea1c94dfd4d562864a095956de7991b430
+
+      - name: Build firmware
+        env:
+          N: ${{ steps.version.outputs.n }}
+        run: bash ci/build.sh "$N" dist/build
+
+      - name: Package release assets
+        env:
+          N: ${{ steps.version.outputs.n }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$(git cat-file -t "refs/tags/$TAG")" == tag ]]; then
+            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG" > dist/changes.md
+          else
+            echo "::warning::$TAG is a lightweight tag; use git tag -a so its message becomes the changelog"
+            : > dist/changes.md
+          fi
+          python3 ci/package_release.py --bin "dist/build/dl41_rgbcw_v1.0.$N.bin" --build "$N" \
+            --repo "$REPO" --changes dist/changes.md --out dist/release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: dist/release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # environment: release   # optional manual approval gate (Settings > Environments > required reviewers)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release
+
+      - name: Verify checksums
+        working-directory: release
+        run: sha256sum --check --strict SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          STAGE: ${{ inputs.stage || 'prerelease' }}
+        run: |
+          set -euo pipefail
+          case "$STAGE" in
+            draft)      stage_flags=(--draft) ;;
+            prerelease) stage_flags=(--prerelease) ;;
+            release)    stage_flags=(--latest) ;;
+            *) echo "::error::unknown stage '$STAGE'"; exit 1 ;;
+          esac
+          mv release/RELEASE_NOTES.md notes.md
+          gh release create "$TAG" --verify-tag --title "DL41 RGBCW firmware $VERSION" \
+            --notes-file notes.md "${stage_flags[@]}" release/*
+          echo "Promote after testing: gh release edit $TAG --prerelease=false --latest"

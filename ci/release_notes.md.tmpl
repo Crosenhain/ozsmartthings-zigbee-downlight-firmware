@@ -1,0 +1,52 @@
+Custom Zigbee firmware **$version** for Oz Smart Things RGBCW downlights (Tuya ZTU module, TLSR8258, SM2235 LED driver). Stock lights show in Zigbee2MQTT as `TS0505B` / `_TZ3210_klsm24op`. OTA file version `$file_version_hex` ($file_version).
+
+## Changes
+
+$changes
+
+## Safety: read before updating
+
+- **Never connect anything (USB adapter, analyser, bench supply) to a light that is connected to mains.** The driver is likely non-isolated. Isolate at the breaker before removing a module; wired flashing is for a module taken out of the light only.
+- **Stock lights:** use only `dl41_rgbcw_v${version}_from_tuya.zigbee`, and only if Z2M shows model `TS0505B`, manufacturer `_TZ3210_klsm24op` and OTA installed version `101`. If anything differs, stop: the LED driver may be a different chip. Never use a from_tuya file older than 1.0.10.
+- **Convert one light first.** Confirm it rejoins and works before converting the rest, one at a time.
+- Conversion wipes the light's Tuya pairing and removes the Tuya bootloader. Stock firmware isn't distributed, so treat conversion as one-way.
+- Keep power on during the transfer (about 35–40 min at Z2M defaults).
+- No warranty: you flash at your own risk.
+
+## Files
+
+| File | Use |
+|---|---|
+| `dl41_rgbcw_v${version}.zigbee` | OTA update for a light already on this custom firmware |
+| `dl41_rgbcw_v${version}_from_tuya.zigbee` | OTA conversion of a stock light (see Safety) |
+| `dl41_rgbcw.mjs` | Z2M external converter → `<z2m data>/external_converters/` (Converters, not Extensions) |
+| `dl41_ota_index.json` | Z2M OTA index, custom → custom only |
+| `dl41_ota_index_from_tuya.json` | Z2M OTA index for converting; matches only `TS0505B` / `_TZ3210_klsm24op` at version 101 |
+| `dl41_rgbcw_v${version}.bin` | Wired recovery image, bench only |
+| `LICENSE`, `NOTICE` | Apache-2.0 terms and attributions (zigbee-light-cct, Telink Zigbee SDK) |
+| `SHA256SUMS` | Check with `sha256sum -c SHA256SUMS` |
+
+## Lights already on custom firmware
+
+Install this release's `dl41_rgbcw.mjs` and restart Z2M, then upload `dl41_rgbcw_v${version}.zigbee` on the device's OTA page. To have Z2M find updates instead:
+
+```yaml
+ota:
+  zigbee_ota_override_index_location: https://github.com/$repo/releases/latest/download/dl41_ota_index.json
+```
+
+Z2M supports only one override index, and if it can't fetch it, OTA checks fail for all devices.
+
+## Converting a stock light
+
+1. Install the converter, and check model, manufacturer and installed version as above.
+2. Upload `dl41_rgbcw_v${version}_from_tuya.zigbee` on that light's OTA page in the Z2M frontend (the tested route).
+3. After "Finished update" the light wipes and restarts factory-new within about 10 s. Permit join: it rejoins with its own IEEE address as `DL41-RGBCW`.
+4. Press **Interview** on the existing device page, then re-add groups, bindings and scenes.
+5. If it hasn't joined after about 5 min, power-cycle once at the wall and wait another 5 min. If still nothing, stop and open an issue before converting more lights.
+
+## SHA-256
+
+```
+$sha256sums
+```

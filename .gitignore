@@ -1,6 +1,7 @@
 # Raw flash images contain per-device Tuya credentials (auth key / UUID at 0xFB000).
 # Keep them out of any repository; share only derived, credential-free data.
-dumps/*.bin
+*.bin
+dumps/*.sha256
 # OTA files built from stock images are Tuya's proprietary firmware.
 dumps/ota/
 dumps/logs/
@@ -9,3 +10,10 @@ __pycache__/
 *.pyc
 docs/
 firmware/build/
+# Device-specific OTA helper output (contains the device IEEE address)
+*.check.json
+*.index.json
+*.update_*.json
+# Local CI / release builds
+out/
+dist/

@@ -1,0 +1,2 @@
+# Tuya light config string at flash 0xF800A (stock DL41, ZTU module)
+{rstnum:5,rstcor:c,Jsonver:1.0.1,brightmin:10,gmwb:75,deftemp:100,gmwg:70,wfcfg:spcl_auto,colormin:10,pmemory:1,2235ccur:3,gmkb:60,pairt:606,iicb:2,2235wcur:3,cmod:rgbcw,iicscl:4,wt:120,cwtype:0,onofftime:1000,prodagain:0,rstbr:50,zllvalue:-50,remdmode:1,colormax:100,cagt:120,iicw:4,notdisturb:0,module:ZT3L,colorpfun:0,iicsda:11,cwmaxp:100,iicc:3,dmod:7,gmwr:100,rgbt:10,gmkg:60,onoffmode:0,brightmax:100,iicg:1,wfct:3,rsttemp:100,category:0505,gmkr:80,defcolor:c,iicr:0,defbright:100,crc:80,}
