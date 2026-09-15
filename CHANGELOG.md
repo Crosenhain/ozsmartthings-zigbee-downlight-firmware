@@ -3,7 +3,7 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
-## [1.0.13] — unreleased
+## [1.0.13] — 2026-09-16
 
 **Fixed: the light sometimes stays dark after turning on** (state ON in Zigbee2MQTT, no light; seen on a light running 1.0.10).
 
