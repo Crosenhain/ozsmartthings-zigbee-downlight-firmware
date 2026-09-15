@@ -6,7 +6,7 @@ Open-source replacement firmware for Oz Smart Things RGBCW Zigbee downlights for
 
 ## Features
 
-- **Basics:** on/off, brightness (no 10 % floor), and colour temperature on the cool/warm LEDs.
+- **Basics:** on/off, brightness (no 10 % floor), and colour temperature on the cool/warm LEDs, set in mireds or Kelvin (`color_temp_kelvin`, 3000–6000 K).
 - **Colour on the RGB LEDs** via XY, hue/saturation and enhanced hue.
 - **Smooth transitions:** colour fades interpolated in perceptual space, and crossfades when switching between colour and white.
 - **Scenes** that store and recall colour and colour loops. Zigbee2MQTT colour-temperature scenes are recalled on the white LEDs.
@@ -130,6 +130,7 @@ After conversion, OTA updates alternate between the `0x0` and `0x40000` slots (5
 `z2m/dl41_rgbcw.mjs`:
 - light with colour temperature 166–333 mireds, XY/HS colour with enhanced hue, power-on behaviour, effects and OTA;
 - `colorloop` / `stop_colorloop` send `colorLoopSet`;
+- `color_temp_kelvin` (3000–6000 K) is converted to mireds, and the Kelvin value is published alongside `color_temp` whichever key was used;
 - it must go in `external_converters/`.
 
 Startup colour temperature isn't exposed: Zigbee2MQTT's "previous" value (65535) is rejected by zigbee-herdsman's 65279 limit, and the firmware doesn't implement the attribute yet.

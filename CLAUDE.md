@@ -74,7 +74,8 @@ The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee
 - **Versions:** Zigbee2MQTT offers only strictly higher file versions.
 
 ### Zigbee2MQTT converter (`z2m/dl41_rgbcw.mjs`)
-- **`toZigbee` order:** converters listed in the definition's own `toZigbee` win over the `m.light()` extend's. This is how `effect: colorloop` is overridden to send `colorLoopSet`.
+- **`toZigbee` order:** converters listed in the definition's own `toZigbee` win over the `m.light()` extend's. This is how `effect: colorloop` is overridden to send `colorLoopSet`, and how `color_temp` / `color_temp_percent` / `color_temp_kelvin` go through one Kelvin-aware wrapper around `tz.light_colortemp`.
+- **Testing the converter:** there is no test in the repo. Check changes by `npm install zigbee-herdsman-converters` in a temp folder, copying the `.mjs` there, and calling `prepareDefinition()`, then a converter's `convertSet` with a mock endpoint.
 - **Location:** the file must live in Z2M's `external_converters/`.
 - **No startup colour temperature:** Z2M's "previous" value (65535) exceeds herdsman's 65279 limit, so the option isn't exposed.
 

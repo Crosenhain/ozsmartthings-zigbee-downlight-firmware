@@ -3,7 +3,14 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
-## [1.0.11] — unreleased
+## [Unreleased]
+
+- **Added (converter only, no firmware change):** `color_temp_kelvin` sets and reports colour temperature in Kelvin (3000–6000 K, step 50), mapped to mireds for the device.
+  - `color_temp` (mireds), `color_temp_percent` and the presets still work, and every change also publishes `color_temp_kelvin`.
+  - Out-of-range values clamp to the white LEDs' 166–333 mireds.
+  - Verified against zigbee-herdsman-converters 26.109.0 (exposes, set path, state, device reports); not yet run in a live Zigbee2MQTT.
+
+## [1.0.11] — 2026-09-15
 
 - **Fixed:** `softwareBuildID` printed the build number's hex nibbles, so builds 10+ read `v1.0.0:`. It is now decimal (`v1.0.11`).
 - **Added:** CI and release pipeline.
