@@ -55,6 +55,7 @@ The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee
 ### Light engine
 - **`light_control.c`:** one shared 10 ms transition timer drives the level, colour-temperature and colour (hue/sat/XY in Q8 fixed point) ramps.
   - Each tick renders five channels (R, G, B, cold, warm) through `light_output_push()` to `sm2235_set()`, which sends a frame only on change.
+  - **The SM2235 bus is write-only, with no ACK.** `light_output_push()` re-sends the final state 50 ms after changes stop and every 2 s while lit (`sm2235_refresh()`). On/off commands call `sm2235_invalidate()` so they always transmit. Keep that if you restructure output.
   - Colour fades are done in gamma-encoded space: HS is decoded per channel, timed XY fades use `color_blend`.
   - `light_mode_crossfade_start()` blends the last *shown* channels when switching between colour and white.
 - **`zcl_color.c`:** ZCL command handlers.
@@ -77,6 +78,8 @@ The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee
 - **`toZigbee` order:** converters listed in the definition's own `toZigbee` win over the `m.light()` extend's. This is how `effect: colorloop` is overridden to send `colorLoopSet`, and how `color_temp` / `color_temp_percent` / `color_temp_kelvin` go through one Kelvin-aware wrapper around `tz.light_colortemp`.
 - **Testing the converter:** there is no test in the repo. Check changes by `npm install zigbee-herdsman-converters` in a temp folder, copying the `.mjs` there, and calling `prepareDefinition()`, then a converter's `convertSet` with a mock endpoint.
 - **Location:** the file must live in Z2M's `external_converters/`.
+- **`z2m/dl41_stock_ota.mjs`** copies Z2M's built-in stock definition (`_TZ3210_klsm24op` only) and adds `ota: true`. Z2M only checks devices with `definition.ota`, and external definitions take precedence over built-ins. Keep it in sync with upstream `src/devices/ozsmartthings.ts` if that changes.
+- **Update index:** releases ship `dl41_ota_index_all.json` (custom entry + filtered stock entry) because Z2M accepts one override index. Matching is zigbee-herdsman's `Device.findMatchingOtaImage`: first entry whose imageType/manufacturerCode/min-max version/modelId/manufacturerName all match.
 - **No startup colour temperature:** Z2M's "previous" value (65535) exceeds herdsman's 65279 limit, so the option isn't exposed.
 
 ## Hardware and tools

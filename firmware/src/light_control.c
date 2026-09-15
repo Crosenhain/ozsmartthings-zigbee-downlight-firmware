@@ -118,6 +118,24 @@ static uint16_t to_10bit(uint16_t v) {
     return o ? (uint16_t)o : 1; /* keep the lowest levels lit instead of rounding to off */
 }
 
+/* The SM2235 bus has no acknowledgement, so a lost or corrupted frame (or one swallowed while the chip
+ * wakes from standby) would otherwise leave the LEDs wrong until the values next change. After the
+ * output stops changing, re-send the final state once; while lit, keep re-sending it periodically,
+ * which also recovers from an LED driver reset. */
+#define OUTPUT_SETTLE_RESEND_MS 50
+#define OUTPUT_REFRESH_MS       2000
+
+static ev_timer_event_t* output_refresh_evt = NULL;
+
+static int light_output_refresh_cb(void* arg) {
+    (void)arg;
+    if(sm2235_refresh()) {
+        return OUTPUT_REFRESH_MS; //lit: keep refreshing at the slower rate
+    }
+    output_refresh_evt = NULL; //off: clear + standby re-sent once, nothing more to do
+    return -1;
+}
+
 static void light_output_push(void) {
     HwConfig* hw_cfg = hw_config_get();
     uint16_t out[SM2235_CHANNELS] = {0};
@@ -136,7 +154,13 @@ static void light_output_push(void) {
             out[hw_cfg->out_map[i]] = to_10bit(ch[i]);
         }
     }
-    sm2235_set(out);
+    if(sm2235_set(out)) {
+        //restart the settle timer on every change; during fades it keeps being pushed back
+        if(output_refresh_evt) {
+            TL_ZB_TIMER_CANCEL(&output_refresh_evt);
+        }
+        output_refresh_evt = TL_ZB_TIMER_SCHEDULE(light_output_refresh_cb, NULL, OUTPUT_SETTLE_RESEND_MS);
+    }
 }
 
 //render a colour (16-bit RGB proportions) at the given 8-bit level onto the RGB LEDs; whites off
@@ -219,6 +243,7 @@ static void light_color_update(void) {
 
 static void hw_light_on_off_update(bool on_off) {
     out_enabled = on_off;
+    sm2235_invalidate(); /* every on/off command transmits, even if the driver thinks nothing changed */
     light_output_push(); /* off: all channels zero -> SM2235 standby */
     if(on_off) {
         status_led_on();

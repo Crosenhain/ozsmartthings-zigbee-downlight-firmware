@@ -2,6 +2,8 @@
 # Keep them out of any repository; share only derived, credential-free data.
 *.bin
 dumps/*.sha256
+# Full-size phone originals (capture time and camera metadata); README uses the cropped copies in images/
+images/PXL_*
 # OTA files built from stock images are Tuya's proprietary firmware.
 dumps/ota/
 dumps/logs/

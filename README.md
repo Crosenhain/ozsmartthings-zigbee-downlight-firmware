@@ -1,6 +1,6 @@
 # Oz Smart Things DL41 Zigbee downlight firmware
 
-Open-source replacement firmware for Oz Smart Things RGBCW Zigbee downlights for use with Zigbee2MQTT. The lights appear in Zigbee2MQTT as model `DL41-03-10-R-ZB`, Zigbee `TS0505B`, `_TZ3210_klsm24op`, and contain a Tuya ZTU module (Telink TLSR8258) driving a Sunmoon SM2235 LED driver. The firmware installs over the air from the stock Tuya firmware.
+Open-source replacement firmware for [Oz Smart Things RGBW Zigbee downlights](https://www.ozsmartthings.com.au/products/oz-smart-rgbw-zigbee-downlight) for use with Zigbee2MQTT. The lights appear in Zigbee2MQTT as model `DL41-03-10-R-ZB`, Zigbee `TS0505B`, `_TZ3210_klsm24op`, and contain a Tuya ZTU module (Telink TLSR8258) driving a Sunmoon SM2235 LED driver. The firmware installs over the air from the stock Tuya firmware.
 
 **Experimental.** Read [Safety](#safety) first. Development history and hardware test results are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -31,6 +31,8 @@ Download from [GitHub Releases](../../releases):
 | Convert a stock Tuya light | `dl41_rgbcw_v1.0.N_from_tuya.zigbee` |
 | Update a light already on this firmware | `dl41_rgbcw_v1.0.N.zigbee` |
 | Zigbee2MQTT converter (required) | `dl41_rgbcw.mjs` (also [`z2m/`](z2m/dl41_rgbcw.mjs)) → `<z2m data>/external_converters/` |
+| Update checks on stock lights (optional) | `dl41_stock_ota.mjs` (also [`z2m/`](z2m/dl41_stock_ota.mjs)) → `<z2m data>/external_converters/` |
+| Zigbee2MQTT update index | `dl41_ota_index_all.json` (converted and stock lights), or `dl41_ota_index.json` / `dl41_ota_index_from_tuya.json` for one kind only |
 | Wired recovery (bench only) | `dl41_rgbcw_v1.0.N.bin` |
 
 **Never use a from_tuya file older than 1.0.10.** Earlier builds can't complete the hand-off from the stock bootloader.
@@ -63,17 +65,36 @@ Convert one light and confirm it works before doing the rest, one at a time.
 
 On-time must stay under 2 s, because the power-on counter clears after 2 s. Removing the device normally in Zigbee2MQTT while it's online does the same.
 
-## Updating a converted light
+## Updates in Zigbee2MQTT
 
-- **Manual:** install the release's `dl41_rgbcw.mjs`, restart Zigbee2MQTT, then upload `dl41_rgbcw_v1.0.N.zigbee` on the device's OTA page.
-- **Automatic check:** point Zigbee2MQTT at the release index:
+**Manual:** install the release's `dl41_rgbcw.mjs`, restart Zigbee2MQTT, then upload `dl41_rgbcw_v1.0.N.zigbee` (converted light) or `dl41_rgbcw_v1.0.N_from_tuya.zigbee` (stock light) on the device's OTA page.
 
-  ```yaml
-  ota:
-    zigbee_ota_override_index_location: https://github.com/<owner>/<repo>/releases/latest/download/dl41_ota_index.json
-  ```
+**As "update available":** Zigbee2MQTT can offer the release to converted lights, and the conversion to stock lights, from one index.
+1. Put `dl41_rgbcw.mjs` and `dl41_stock_ota.mjs` in `<z2m data>/external_converters/`.
+   - Zigbee2MQTT only checks devices whose definition supports OTA. Its built-in definition for the stock light doesn't, so `dl41_stock_ota.mjs` replaces it with an identical one that does, for `_TZ3210_klsm24op` only.
+   - Remove it once every light is converted.
+2. Set the override index in `configuration.yaml` and restart Zigbee2MQTT:
 
-  Zigbee2MQTT supports only one override index, and OTA checks fail for all devices if it can't be fetched. This route has been checked against Zigbee2MQTT's code but not yet tested live.
+   ```yaml
+   ota:
+     zigbee_ota_override_index_location: https://github.com/<owner>/<repo>/releases/latest/download/dl41_ota_index_all.json
+   ```
+
+3. Press **Check for updates** on the OTA page, or wait for the lights' periodic checks.
+
+How it matches:
+- **Converted lights** match on manufacturer `0x0EBA`, image type `0x0241` and model `DL41-RGBCW`.
+- **Stock lights** match on Tuya's `0x1141` / `0xD3A3`, but only with model `TS0505B`, manufacturer `_TZ3210_klsm24op` and version 101. Other Tuya devices with the same IDs aren't offered it.
+- **Nothing installs by itself:** you still press Update per light, and a stock conversion should still follow [Converting a stock light](#converting-a-stock-light).
+
+**Slow or stalling transfers:** a stock light downloads in 48-byte blocks and gives up after about 50 s without responses, so a weak link stalls it part-way. It keeps what it downloaded, so starting the update again continues from there.
+- Lowering `image_block_response_delay` (default 250 ms, minimum 50) in the update request or under `ota:` shortens the transfer.
+- [examples/home-assistant/dl41_ota_auto_resume.yaml](examples/home-assistant/dl41_ota_auto_resume.yaml) is an example Home Assistant automation that re-sends a stalled update automatically, with a retry limit.
+
+**Caveats:**
+- Zigbee2MQTT supports only one override index, and OTA checks fail for all devices if it can't be fetched.
+- `releases/latest` only resolves once a release is promoted from prerelease. Until then, use a tagged URL (`releases/download/v1.0.N/...`).
+- The index was checked with zigbee-herdsman's own matching code, and the firmware downloads through GitHub's redirect with a matching SHA-512, but it hasn't been tested in a live Zigbee2MQTT yet.
 
 ## Safety
 
@@ -118,7 +139,7 @@ After conversion, OTA updates alternate between the `0x0` and `0x40000` slots (5
 
 ### Light engine
 
-- **Output:** the SM2235 on SCL = PB4 / SDA = PC3. It sends a frame only when values change, and goes to standby when everything is off. Current codes are capped at 3/3.
+- **Output:** the SM2235 on SCL = PB4 / SDA = PC3. The bus has no acknowledgement, so a frame is sent when values change, the final state is re-sent 50 ms after changes stop, and it's refreshed every 2 s while lit. Everything off → standby. Current codes are capped at 3/3.
 - **Timing:** one 10 ms timer drives level, colour-temperature and colour ramps. Brightness uses a gamma table (0–8192 → 10-bit).
 - **Colour rendering:** HS or xy → linear RGB → gains 80/60/60 % (from the stock config) → summed RGB capped at 200 % → scaled by level. The white LEDs are off in colour mode.
 - **Fades** run on gamma-encoded channel values, so hue sweeps and colour-to-colour fades look even. Switching between colour and white crossfades the five channels actually shown over the transition time.
@@ -136,6 +157,29 @@ After conversion, OTA updates alternate between the `0x0` and `0x40000` slots (5
 Startup colour temperature isn't exposed: Zigbee2MQTT's "previous" value (65535) is rejected by zigbee-herdsman's 65279 limit, and the firmware doesn't implement the attribute yet.
 
 ## Hardware
+
+### Opening the light
+
+The downlight has two main parts:
+- **White bezel:** the front trim with the diffuser, the part you see in the ceiling.
+- **Black body:** the finned heatsink behind it, which carries the spring clips.
+
+The body screws into the bezel with a standard thread. To open the light:
+1. Take it out of the ceiling and **disconnect it from mains**.
+2. Hold the bezel and turn the body **counter-clockwise** to unscrew it and reach the boards inside.
+
+To reassemble, remove every programming wire, screw the body back in **clockwise** until it's snug, and only then reconnect mains.
+
+<p>
+  <img src="images/ztu_module_top.jpg" alt="Tuya ZTU Zigbee module, top side: printed antenna, RF shield and label (label blurred)" width="300">
+  <img src="images/ztu_module_bottom.jpg" alt="Tuya ZTU Zigbee module, underside: pin labels including SWS, RST and the soldered bottom row VCC, GND, B5, B4, D2, C3, C2" width="300">
+</p>
+
+*The Tuya ZTU module, removed from the driver board. Left: top side, with the module label blurred. Right: underside, showing the pin names, SWS and RST side pads, and the bottom row that was soldered to the driver board.*
+
+<img src="images/sm2235egh_u1.jpg" alt="Close-up of U1 on the LED board, marked SM2235EGH, next to warm-white 2835 LEDs" width="500">
+
+*U1 on the LED board: the Sunmoon SM2235EGH LED driver, next to warm-white 2835 LEDs.*
 
 | Part | Marking | Notes |
 |---|---|---|

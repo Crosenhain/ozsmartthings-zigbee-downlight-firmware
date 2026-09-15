@@ -7,9 +7,12 @@ DIR receives (the index names are constant so /releases/latest/download/<name> a
   dl41_rgbcw_v1.0.N.bin               wired recovery image (bench only)
   dl41_rgbcw_v1.0.N.zigbee            OTA for lights already on this firmware (mfr 0x0EBA, type 0x0241)
   dl41_rgbcw_v1.0.N_from_tuya.zigbee  OTA stock Tuya -> custom (mfr 0x1141, type 0xD3A3)
-  dl41_rgbcw.mjs                      Zigbee2MQTT external converter
+  dl41_rgbcw.mjs                      Zigbee2MQTT external converter (custom firmware)
+  dl41_stock_ota.mjs                  Zigbee2MQTT external converter enabling OTA checks on stock lights
   dl41_ota_index.json                 Z2M OTA index, custom -> custom only
   dl41_ota_index_from_tuya.json       Z2M OTA index, stock -> custom, restricted to the proven stock light
+  dl41_ota_index_all.json             both entries: Z2M takes a single override index, so use this one to
+                                      offer updates to converted and stock lights at the same time
   LICENSE, NOTICE                     Apache-2.0 terms and attributions for the binaries
   SHA256SUMS                          `sha256sum -c` format
   RELEASE_NOTES.md                    release body (not uploaded as an asset)
@@ -26,7 +29,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MAKE_OTA = ROOT / "tools" / "make_ota.py"
-CONVERTER = ROOT / "z2m" / "dl41_rgbcw.mjs"
+CONVERTERS = (ROOT / "z2m" / "dl41_rgbcw.mjs", ROOT / "z2m" / "dl41_stock_ota.mjs")
 NOTES_TEMPLATE = ROOT / "ci" / "release_notes.md.tmpl"
 
 OTA_HDR = struct.Struct("<IHHHHHIH32sI")  # same layout as tools/make_ota.py
@@ -63,9 +66,9 @@ def make_ota(src, out, mfr, image_type, version, header):
     return data
 
 
-def index_json(path, data, url, filters, notes_url):
+def index_entry(path, data, url, filters, notes_url):
     _, _, _, _, mfr, image_type, version, _, hstr, _ = OTA_HDR.unpack_from(data)
-    entry = {
+    return {
         "fileName": path.name,
         "fileVersion": version,
         "fileSize": len(data),
@@ -77,7 +80,10 @@ def index_json(path, data, url, filters, notes_url):
         "releaseNotes": notes_url,
         **filters,
     }
-    return json.dumps([entry], indent=2) + "\n"
+
+
+def write_index(path, entries):
+    path.write_text(json.dumps(entries, indent=2) + "\n", newline="\n")
 
 
 def main():
@@ -115,23 +121,25 @@ def main():
     ota_tuya = out / f"dl41_rgbcw_v{version}_from_tuya.zigbee"
     ota_data = make_ota(bin_out, ota, CUSTOM_MFR, CUSTOM_TYPE, fv, f"DL41 RGBCW {version}")
     tuya_data = make_ota(bin_out, ota_tuya, TUYA_MFR, TUYA_TYPE, fv, f"DL41 RGBCW {version} from Tuya")
-    shutil.copyfile(CONVERTER, out / CONVERTER.name)
+    for converter in CONVERTERS:
+        shutil.copyfile(converter, out / converter.name)
     for legal in ("LICENSE", "NOTICE"):
         shutil.copyfile(ROOT / legal, out / legal)
-    (out / "dl41_ota_index.json").write_text(
-        index_json(ota, ota_data, f"{base}/{ota.name}", CUSTOM_FILTER, notes_url))
-    (out / "dl41_ota_index_from_tuya.json").write_text(
-        index_json(ota_tuya, tuya_data, f"{base}/{ota_tuya.name}", STOCK_FILTER, notes_url))
+    custom_entry = index_entry(ota, ota_data, f"{base}/{ota.name}", CUSTOM_FILTER, notes_url)
+    stock_entry = index_entry(ota_tuya, tuya_data, f"{base}/{ota_tuya.name}", STOCK_FILTER, notes_url)
+    write_index(out / "dl41_ota_index.json", [custom_entry])
+    write_index(out / "dl41_ota_index_from_tuya.json", [stock_entry])
+    write_index(out / "dl41_ota_index_all.json", [custom_entry, stock_entry])
 
     sums = "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n"
                    for p in sorted(out.iterdir()) if p.is_file())
-    (out / "SHA256SUMS").write_text(sums)
+    (out / "SHA256SUMS").write_text(sums, newline="\n")  # LF even on Windows, or `sha256sum -c` fails
 
     changes = args.changes.read_text().strip() if args.changes and args.changes.exists() else ""
     notes = string.Template(NOTES_TEMPLATE.read_text()).substitute(
         version=version, tag=tag, repo=args.repo, file_version=fv, file_version_hex=f"0x{fv:08X}",
         changes=changes or "See the README for details.", sha256sums=sums.rstrip())
-    (out / "RELEASE_NOTES.md").write_text(notes)
+    (out / "RELEASE_NOTES.md").write_text(notes, newline="\n")
     print(f"packaged {tag} in {out}\n{sums}", end="")
 
 

@@ -20,5 +20,15 @@
 /* Configure pins and put the chip in standby. Pins == SM2235_PIN_NC disables the driver. */
 void sm2235_init(uint32_t scl_pin, uint32_t sda_pin, uint8_t cur_rgb_code, uint8_t cur_cw_code);
 
-/* Set OUT1..OUT5 (0..1023). Sends only when values change; all zero enters standby. */
-void sm2235_set(const uint16_t out[SM2235_CHANNELS]);
+/* Set OUT1..OUT5 (0..1023). Sends only when values change (or after sm2235_invalidate()); all zero
+ * enters standby. Returns non-zero if a frame was sent. There is no acknowledgement, so callers should
+ * follow a change with sm2235_refresh() shortly afterwards and periodically while lit. */
+int sm2235_set(const uint16_t out[SM2235_CHANNELS]);
+
+/* Forget what was last sent, so the next sm2235_set() transmits even if the values are unchanged. */
+void sm2235_invalidate(void);
+
+/* Re-send the last state: the output frame if lit, otherwise clear + standby.
+ * Recovers from a lost or corrupted frame, a frame swallowed while the chip wakes from standby, or an
+ * LED driver reset. Returns non-zero if the last state is lit. */
+int sm2235_refresh(void);

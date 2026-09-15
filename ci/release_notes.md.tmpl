@@ -19,23 +19,34 @@ $changes
 |---|---|
 | `dl41_rgbcw_v${version}.zigbee` | OTA update for a light already on this custom firmware |
 | `dl41_rgbcw_v${version}_from_tuya.zigbee` | OTA conversion of a stock light (see Safety) |
-| `dl41_rgbcw.mjs` | Z2M external converter → `<z2m data>/external_converters/` (Converters, not Extensions) |
-| `dl41_ota_index.json` | Z2M OTA index, custom → custom only |
-| `dl41_ota_index_from_tuya.json` | Z2M OTA index for converting; matches only `TS0505B` / `_TZ3210_klsm24op` at version 101 |
+| `dl41_rgbcw.mjs` | Z2M external converter for converted lights → `<z2m data>/external_converters/` (Converters, not Extensions) |
+| `dl41_stock_ota.mjs` | Z2M external converter that enables update checks on stock `_TZ3210_klsm24op` lights |
+| `dl41_ota_index_all.json` | Z2M OTA index offering updates to converted **and** stock lights (use this one) |
+| `dl41_ota_index.json` | Z2M OTA index, converted lights only |
+| `dl41_ota_index_from_tuya.json` | Z2M OTA index, stock lights only; matches only `TS0505B` / `_TZ3210_klsm24op` at version 101 |
 | `dl41_rgbcw_v${version}.bin` | Wired recovery image, bench only |
 | `LICENSE`, `NOTICE` | Apache-2.0 terms and attributions (zigbee-light-cct, Telink Zigbee SDK) |
 | `SHA256SUMS` | Check with `sha256sum -c SHA256SUMS` |
 
+## Update notifications in Zigbee2MQTT
+
+To have converted lights offered this update, and stock lights offered the conversion, as "update available":
+
+1. Put this release's `dl41_rgbcw.mjs` and `dl41_stock_ota.mjs` in `<z2m data>/external_converters/`.
+2. Point Z2M at the combined index, then restart Z2M:
+
+   ```yaml
+   ota:
+     zigbee_ota_override_index_location: https://github.com/$repo/releases/latest/download/dl41_ota_index_all.json
+   ```
+
+3. Press **Check for updates** on the OTA page, or wait for the lights' own periodic checks.
+
+Z2M never installs anything by itself; you still press Update per light. It supports only one override index, and if it can't fetch it, OTA checks fail for all devices. `latest` only points at a release once it's promoted from prerelease.
+
 ## Lights already on custom firmware
 
-Install this release's `dl41_rgbcw.mjs` and restart Z2M, then upload `dl41_rgbcw_v${version}.zigbee` on the device's OTA page. To have Z2M find updates instead:
-
-```yaml
-ota:
-  zigbee_ota_override_index_location: https://github.com/$repo/releases/latest/download/dl41_ota_index.json
-```
-
-Z2M supports only one override index, and if it can't fetch it, OTA checks fail for all devices.
+Install this release's `dl41_rgbcw.mjs` and restart Z2M, then update the light from its OTA page (or upload `dl41_rgbcw_v${version}.zigbee` there).
 
 ## Converting a stock light
 

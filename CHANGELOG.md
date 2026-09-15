@@ -3,6 +3,32 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
+## [1.0.13] — unreleased
+
+**Fixed: the light sometimes stays dark after turning on** (state ON in Zigbee2MQTT, no light; seen on a light running 1.0.10).
+
+- **Likely cause.** The SM2235 bus has no acknowledgement, and the driver sent a frame only when channel values changed, never re-sending one. If the turn-on frame was lost or corrupted, or swallowed while the chip woke from standby, the firmware believed it was delivered. The LEDs stayed dark until the values next changed. Not yet confirmed on hardware.
+- **Fix:**
+  - Every on/off command transmits, even if the driver thinks nothing changed (`sm2235_invalidate()`).
+  - 50 ms after the output stops changing, the final state is re-sent once. While lit it is re-sent every 2 s (`sm2235_refresh()`), which also recovers from an LED driver reset. When off, clear + standby is re-sent once.
+  - Interrupts are masked for each byte on the bus (~0.1 ms), so a radio interrupt can't stretch a clock pulse mid-byte.
+- **Tests:** `test_sm2235.c` covers the send result, forced re-send, refresh when lit and when off, and interrupts masked around every data/ACK clock.
+
+**Added: update notifications for converted and stock lights.**
+- **`z2m/dl41_stock_ota.mjs`:** Zigbee2MQTT's built-in stock definition (`_TZ3210_klsm24op` only) plus `ota: true`, so Zigbee2MQTT checks stock lights for updates.
+- **`dl41_ota_index_all.json`** is a new release asset with both index entries (Zigbee2MQTT takes one override index). Both converters are now release assets too.
+- **Verified** with zigbee-herdsman-converters 26.110.0 / zigbee-herdsman 10.9.3:
+  - the external stock definition wins only for `_TZ3210_klsm24op`;
+  - `findMatchingOtaImage` offers each light only its own image, and rejects other manufacturer names, versions and models;
+  - a GitHub release download via Node `fetch` matches the index SHA-512.
+
+**Fixed:** `ci/package_release.py` writes `SHA256SUMS`, the indexes and the notes with LF line endings, so checksums verify when packaged on Windows.
+
+**Added: `examples/home-assistant/dl41_ota_auto_resume.yaml`**, an example automation that re-sends a Zigbee2MQTT OTA update after a "did not start/finish firmware download" failure.
+- Stock-to-custom conversions stall on weak links; one observed at 70 %, `linkquality` 53, with Zigbee2MQTT timing out after 150 s waiting for the next block request.
+- The attempt count is carried in the request's `transaction` field, up to 10 attempts.
+- Templates checked against real failure responses with Jinja; not tested in a live Home Assistant.
+
 ## [1.0.12] — 2026-09-15
 
 - **Firmware:** version bump only, functionally identical to 1.0.11. Updating lights is optional.

@@ -1,0 +1,97 @@
+# Home Assistant automation (example): resume a Zigbee2MQTT OTA update that stalled.
+#
+# When a stock-to-custom conversion (or any OTA update) stops part-way, Zigbee2MQTT reports e.g.
+#   OTA update of 'Kitchen downlight' failed (Device ... did not start/finish firmware download after being
+#   notified. (Timeout after 150000ms [... clusterId=25 cmdId=3 ...]))
+# and the transfer has to be started again by hand. The light keeps what it already downloaded, so a new
+# request continues from there. This automation sends that request for you, a minute after the failure,
+# up to `max_attempts` times per update.
+#
+# How it works:
+# - It listens to Zigbee2MQTT's response topic for OTA update requests.
+# - It only acts on "did not start/finish firmware download" failures; aborts, "no update available",
+#   "already in progress" and similar errors are left alone.
+# - The attempt count travels in the request's `transaction` field ("dl41-resume-<n>"), which Zigbee2MQTT
+#   echoes back, so no helpers or stored state are needed.
+#
+# Requirements:
+# - Home Assistant 2024.10 or later (triggers:/actions: syntax) with the MQTT integration.
+# - Zigbee2MQTT must be able to find the firmware again on each retry. Either:
+#   - set `firmware_url` below to the .zigbee file (a GitHub release URL, or a path relative to the
+#     Zigbee2MQTT data folder); or
+#   - leave it empty and configure `ota.zigbee_ota_override_index_location` (e.g. dl41_ota_index_all.json).
+#   A file uploaded once through the frontend is not remembered for retries.
+# - Stock lights also need z2m/dl41_stock_ota.mjs installed, or Zigbee2MQTT refuses OTA requests for them.
+#
+# Install: Settings > Automations > Create automation > Edit in YAML, paste this, adjust the variables.
+# If your Zigbee2MQTT base topic isn't "zigbee2mqtt", change it in the trigger and in the publish action.
+# Example only: not tested against a live Home Assistant.
+
+id: dl41_ota_auto_resume
+alias: Resume stalled Zigbee2MQTT OTA updates
+description: Re-sends a Zigbee2MQTT OTA update request after it fails with "did not start/finish firmware download".
+mode: queued
+max: 10
+
+triggers:
+  - trigger: mqtt
+    topic: zigbee2mqtt/bridge/response/device/ota_update/update
+
+variables:
+  # --- settings ---
+  max_attempts: 10
+  retry_delay_seconds: 60
+  image_block_response_delay: 100 # ms between blocks; Zigbee2MQTT default 250, minimum 50. 0 = don't send.
+  firmware_url: "" # empty = let Zigbee2MQTT pick the image from its OTA index
+
+  # --- derived from the failure response ---
+  error_text: "{{ trigger.payload_json.error | default('') if trigger.payload_json is defined else '' }}"
+  device: >-
+    {{ (error_text | regex_findall("OTA update of '([^']+)' failed") + [''])[0] }}
+  previous_attempt: >-
+    {% set tx = (trigger.payload_json.transaction | default('') if trigger.payload_json is defined else '') | string %}
+    {{ tx.split('-')[-1] | int(0) if tx.startswith('dl41-resume-') else 0 }}
+  next_attempt: "{{ previous_attempt | int + 1 }}"
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.payload_json is defined
+         and trigger.payload_json.status | default('') == 'error'
+         and 'did not start/finish firmware download' in error_text
+         and device != '' }}
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ next_attempt | int <= max_attempts | int }}"
+        sequence:
+          - delay:
+              seconds: "{{ retry_delay_seconds | int }}"
+          - action: mqtt.publish
+            data:
+              topic: zigbee2mqtt/bridge/request/device/ota_update/update
+              payload: >-
+                {% set tx = 'dl41-resume-' ~ next_attempt %}
+                {% set delay_ms = image_block_response_delay | int %}
+                {% if firmware_url and delay_ms > 0 %}
+                {{ {'id': device, 'transaction': tx, 'url': firmware_url, 'image_block_response_delay': delay_ms} | to_json }}
+                {% elif firmware_url %}
+                {{ {'id': device, 'transaction': tx, 'url': firmware_url} | to_json }}
+                {% elif delay_ms > 0 %}
+                {{ {'id': device, 'transaction': tx, 'image_block_response_delay': delay_ms} | to_json }}
+                {% else %}
+                {{ {'id': device, 'transaction': tx} | to_json }}
+                {% endif %}
+          - action: logbook.log
+            data:
+              name: Zigbee2MQTT OTA
+              message: "Resuming OTA update of {{ device }} (attempt {{ next_attempt }} of {{ max_attempts }})"
+    default:
+      - action: persistent_notification.create
+        data:
+          title: Zigbee2MQTT OTA update gave up
+          message: >-
+            OTA update of {{ device }} still failed after {{ max_attempts }} automatic attempts.
+            Last error: {{ error_text }}

@@ -18,6 +18,8 @@ static int nframes = 0;
 static int in_frame = 0, bitcount = 0, cur_byte = 0, prev_scl = 1, prev_sda = 1;
 static int errors = 0;
 static int clock_rises_while_sda_changed = 0;
+static int irq_enabled = 1, irq_depth_errors = 0;
+static int unmasked_rises_in_frame = 0; /* only each frame's STOP clock may rise with IRQs enabled */
 
 static void sample(void) {
     int s = scl, d = line_sda();
@@ -30,6 +32,7 @@ static void sample(void) {
             in_frame = 0; nframes++;
         }
     }
+    if (in_frame && s && !prev_scl && irq_enabled) unmasked_rises_in_frame++;
     if (in_frame && s && !prev_scl) { /* rising edge: sample */
         if (bitcount < 8) {
             cur_byte = (cur_byte << 1) | d;
@@ -57,6 +60,8 @@ void gpio_set_output_en(uint32_t pin, unsigned v) { if (pin == SDA) { sda_oe = v
 void gpio_set_input_en(uint32_t pin, unsigned v) { (void)pin; (void)v; }
 void gpio_set_func(uint32_t pin, GPIO_FuncTypeDef f) { (void)pin; (void)f; }
 void sleep_us(unsigned long us) { (void)us; }
+u32 drv_disable_irq(void) { u32 was = (u32)irq_enabled; irq_enabled = 0; return was; }
+u32 drv_restore_irq(u32 en) { if (irq_enabled) irq_depth_errors++; irq_enabled = (int)en; return en; }
 
 static void expect_frame(int idx, const uint8_t *exp, int len, const char *what) {
     if (idx >= nframes) { printf("FAIL %s: missing frame %d\n", what, idx); errors++; return; }
@@ -85,9 +90,23 @@ int main(void) {
     expect_frame(0, exp_cw, 12, "CW only (0xD0, cw nibble only)");
 
     reset_capture();
-    sm2235_set(cw);
-    printf("%s unchanged values send nothing (%d frames)\n", nframes == 0 ? "ok  " : "FAIL", nframes);
-    if (nframes) errors++;
+    int sent = sm2235_set(cw);
+    printf("%s unchanged values send nothing (%d frames, returned %d)\n", nframes == 0 && !sent ? "ok  " : "FAIL", nframes, sent);
+    if (nframes || sent) errors++;
+
+    reset_capture();
+    sm2235_invalidate();
+    sent = sm2235_set(cw);
+    printf("%s after invalidate, unchanged values are sent again (returned %d)\n", sent ? "ok  " : "FAIL", sent);
+    if (!sent) errors++;
+    expect_frame(0, exp_cw, 12, "invalidate resend");
+
+    reset_capture();
+    int lit = sm2235_refresh();
+    printf("%s refresh while lit returns %d\n", lit ? "ok  " : "FAIL", lit);
+    if (!lit) errors++;
+    expect_frame(0, exp_cw, 12, "refresh re-sends the lit frame");
+    if (nframes != 1) { printf("FAIL refresh sent %d frames\n", nframes); errors++; }
 
     reset_capture();
     uint16_t rgb[5] = {1, 300, 1023, 0, 0};
@@ -107,15 +126,34 @@ int main(void) {
     expect_frame(0, zero_all, 12, "off: clear");
     expect_frame(1, standby, 12, "off: standby");
 
+    reset_capture();
+    lit = sm2235_refresh();
+    printf("%s refresh while off returns %d\n", !lit ? "ok  " : "FAIL", lit);
+    if (lit) errors++;
+    expect_frame(0, zero_all, 12, "refresh while off: clear");
+    expect_frame(1, standby, 12, "refresh while off: standby");
+
     printf("bus idle high after frames: %s\n", (scl && line_sda()) ? "ok" : "FAIL");
     if (!(scl && line_sda())) errors++;
     printf("DATA changes while CLK high inside bytes: %d\n", clock_rises_while_sda_changed);
     if (clock_rises_while_sda_changed) errors++;
 
+    /* Every data/ACK clock must happen with IRQs masked; only STOP clocks (one per frame) may not. */
+    reset_capture();
+    unmasked_rises_in_frame = 0;
+    sm2235_set(all);
+    sm2235_set(off);
+    printf("%s clocks with IRQs enabled: %d (expected %d STOP clocks), unbalanced restores: %d, IRQs %s after\n",
+           unmasked_rises_in_frame == nframes && !irq_depth_errors && irq_enabled ? "ok  " : "FAIL",
+           unmasked_rises_in_frame, nframes, irq_depth_errors, irq_enabled ? "enabled" : "DISABLED");
+    if (unmasked_rises_in_frame != nframes || irq_depth_errors || !irq_enabled) errors++;
+
     sm2235_init(0, SDA, 3, 3);
     reset_capture();
-    sm2235_set(all);
-    printf("%s disabled driver (PIN_NC) sends nothing\n", nframes == 0 ? "ok  " : "FAIL");
+    sent = sm2235_set(all);
+    lit = sm2235_refresh();
+    printf("%s disabled driver (PIN_NC) sends nothing\n", nframes == 0 && !sent && !lit ? "ok  " : "FAIL");
+    if (nframes || sent || lit) errors++;
 
     printf(errors ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", errors);
     return errors ? 1 : 0;
