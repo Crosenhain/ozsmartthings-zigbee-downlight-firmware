@@ -3,6 +3,15 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
+## [1.0.14] — 2026-09-16
+
+- **Firmware:** version bump only, functionally identical to 1.0.13.
+- **Fixed (converter): the light's state never came back to Zigbee2MQTT.** `m.light()` defaults to `configureReporting: false`, so Configure bound nothing and set up no reporting, leaving the Bind and Reporting tabs empty. With Zigbee2MQTT's "optimistic" option off, the published state then never changed, and Home Assistant's `light.toggle` appeared to do nothing.
+  - The converter now sets `configureReporting: true`. Press **Configure** on the device after installing it.
+  - Verified against zigbee-herdsman-converters 26.39.1 (the version in Zigbee2MQTT 2.9.2-dev): Configure binds genOnOff, genLevelCtrl and lightingColorCtrl to the coordinator and reports onOff (immediately), currentLevel (5 s) and the colour attributes (10 s).
+  - The firmware already marks those attributes reportable and reports them at least every 120 s to bound destinations.
+  - Confirmed working on a converted light: with "optimistic" off, the state now follows the light itself.
+
 ## [1.0.13] — 2026-09-16
 
 **Fixed: the light sometimes stays dark after turning on** (state ON in Zigbee2MQTT, no light; seen on a light running 1.0.10).

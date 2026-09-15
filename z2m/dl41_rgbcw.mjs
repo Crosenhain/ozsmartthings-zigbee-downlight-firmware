@@ -8,6 +8,7 @@
 //             seconds, default 15), so "stop_colorloop" fades back to what was lit before the loop.
 //             Scenes (scene_store / scene_add / scene_recall) now store and recall colour.
 // Converter only: `color_temp_kelvin` sets and reports colour temperature in Kelvin (the device works in mireds).
+// Converter only: binding and attribute reporting are set up on Configure, so the light reports its own state.
 import * as exposes from "zigbee-herdsman-converters/lib/exposes";
 import * as m from "zigbee-herdsman-converters/lib/modernExtend";
 import * as tz from "zigbee-herdsman-converters/converters/toZigbee";
@@ -96,6 +97,9 @@ export default {
             colorTemp: {range: COLOR_TEMP_RANGE_MIREDS, startup: false},
             color: {modes: ["xy", "hs"], enhancedHue: true},
             powerOnBehavior: true,
+            // Bind and configure reporting on Configure, so the light reports its own state instead of
+            // Zigbee2MQTT only assuming it (needed with the device's "optimistic" option turned off).
+            configureReporting: true,
             // blink / breathe / okay / channel_change / finish_effect / stop_effect, plus colorloop / stop_colorloop
             effect: true,
         }),

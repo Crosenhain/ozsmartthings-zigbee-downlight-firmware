@@ -152,6 +152,7 @@ After conversion, OTA updates alternate between the `0x0` and `0x40000` slots (5
 - light with colour temperature 166–333 mireds, XY/HS colour with enhanced hue, power-on behaviour, effects and OTA;
 - `colorloop` / `stop_colorloop` send `colorLoopSet`;
 - `color_temp_kelvin` (3000–6000 K) is converted to mireds, and the Kelvin value is published alongside `color_temp` whichever key was used;
+- `configureReporting: true`, so **Configure** binds on/off, level and colour to the coordinator and sets up reporting; without it the light never reports its own state and Zigbee2MQTT can only assume it;
 - it must go in `external_converters/`.
 
 Startup colour temperature isn't exposed: Zigbee2MQTT's "previous" value (65535) is rejected by zigbee-herdsman's 65279 limit, and the firmware doesn't implement the attribute yet.
