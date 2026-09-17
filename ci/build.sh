@@ -41,8 +41,10 @@ S=$REPO/firmware/src
 T=$REPO/firmware/test
 gcc -std=gnu99 -Wall -I"$S" -o "$WORK/test_color_math" "$T/test_color_math.c" "$S/color_math.c"
 gcc -std=gnu99 -Wall -I"$T/stub" -I"$S" -o "$WORK/test_sm2235" "$T/test_sm2235.c" "$S/sm2235.c"
+gcc -std=gnu99 -Wall -I"$T/stub" -I"$S" -o "$WORK/test_light_control" "$T/test_light_control.c" "$S/light_control.c" "$S/color_math.c" -lm
 "$WORK/test_color_math" | tail -n 1
 "$WORK/test_sm2235" | tail -n 1
+"$WORK/test_light_control" | tail -n 1
 
 # --- toolchain (x86-64 Linux; needs only libc and zlib) ---
 if [[ -z ${TC32_DIR:-} ]]; then

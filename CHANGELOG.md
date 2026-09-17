@@ -3,6 +3,29 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
+## [1.0.15] — 2026-09-18
+
+**Fixed: the light stays dark when it is turned on with a brightness** (Home Assistant `light.toggle` or `light.turn_on` with `brightness` / `brightness_pct`; turning off, and turning on without a brightness, worked).
+
+- **Cause.**
+  - Zigbee2MQTT sends a turn-on that carries a brightness or a transition as a single `MoveToLevelWithOnOff`, with no `On`.
+  - `light_level_ramp_to_level()` only set OnOff and enabled the output when CurrentLevel was going to *rise* (`level_step_256 > 0`, inherited from the Telink sample light).
+  - `Off` keeps CurrentLevel, so the requested brightness is usually the level the light already has: the step is 0, OnOff stays 0 and the LEDs stay dark, while Zigbee2MQTT (optimistic) shows ON.
+  - Home Assistant's toggle then sees "on" and sends `Off`, so every other toggle appeared to do nothing. A fixed brightness works once (the level rises) and never again.
+- **Fix (firmware):**
+  - "With on/off" commands turn the light on whenever they end above the minimum level.
+  - When the light was off, the ramp starts from the minimum level (or from the brightness still lit during a fade-out), so the light fades up to the target instead of popping on at the old level. `MoveWithOnOff` upwards does the same.
+  - Only a *downward* ramp turns the light off at the minimum level. After an off with a transition, CurrentLevel is 1, and a slow turn-on ramp that was still at 1 on its first tick switched itself off again.
+  - The per-tick remainder of a slow ramp is applied in the ramp's direction. With an integer step of 0 it went downwards: 200 → 201 over 30 s ended at 199.
+  - A level ramp that takes over the 300 ms off fade gates the output off. Recalling a scene that is off sends `Off`, then a level, which left the LEDs lit with OnOff = 0.
+- **Fix (converter), for lights still on 1.0.14 or earlier:** after a turn-on that carries a brightness or a transition, `dl41_rgbcw.mjs` also sends `On`. Installing the converter and restarting Zigbee2MQTT fixes those lights without an update. Lights reporting build 15 or later don't get the extra command; groups always do.
+- **Tests:**
+  - New `firmware/test/test_light_control.c` runs the real `light_control.c` against a simulated timer and checks OnOff, CurrentLevel and the LED output after each command sequence. The 1.0.14 code fails 26 of its checks, including the reported one.
+  - The converter was checked against zigbee-herdsman-converters 26.110.0 with a mock endpoint: turn-ons with a brightness or a transition send `MoveToLevelWithOnOff` then `On` for builds below 15; `Off`, `Toggle`, a plain `On` and brightness 0 are unchanged.
+- **Hardware:**
+  - The converter fix is confirmed on converted lights running 1.0.14: Home Assistant's `light.toggle` with a brightness now turns them on.
+  - The 1.0.15 firmware itself hasn't been tested on a light yet.
+
 ## [1.0.14] — 2026-09-16
 
 - **Firmware:** version bump only, functionally identical to 1.0.13.

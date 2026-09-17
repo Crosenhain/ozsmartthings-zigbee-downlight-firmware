@@ -9,8 +9,11 @@
 //             Scenes (scene_store / scene_add / scene_recall) now store and recall colour.
 // Converter only: `color_temp_kelvin` sets and reports colour temperature in Kelvin (the device works in mireds).
 // Converter only: binding and attribute reporting are set up on Configure, so the light reports its own state.
+// Converter only: lights on firmware 1.0.14 or earlier get an On after every turn-on that carries a brightness or a
+//             transition; they stayed dark otherwise (fixed in firmware 1.0.15).
 import * as exposes from "zigbee-herdsman-converters/lib/exposes";
 import * as m from "zigbee-herdsman-converters/lib/modernExtend";
+import * as utils from "zigbee-herdsman-converters/lib/utils";
 import * as tz from "zigbee-herdsman-converters/converters/toZigbee";
 
 // hw_variants.h: cold 6000 K (166 mireds), warm 3000 K (333 mireds).
@@ -36,6 +39,27 @@ const effectWithColorLoop = {
             return;
         }
         return tz.effect.convertSet(entity, key, value, meta);
+    },
+};
+
+// Zigbee2MQTT sends a turn-on that carries a brightness or a transition as a lone MoveToLevelWithOnOff. Firmware 1.0.14
+// and earlier only turned on from it when the level rose, and Off keeps the level, so {"state":"ON","brightness":N}
+// (Home Assistant's light.toggle / light.turn_on with a brightness) usually left the light dark. Following it with On
+// lights them; firmware with the fix ignores the extra command. Same keys as light_onoff_brightness, so it replaces it.
+const FIRST_BUILD_TURNING_ON_FROM_LEVEL = 15;
+const needsExplicitOn = (entity) => {
+    // softwareBuildID is "v1.0.NN". Groups have none, and a member may still run an old build: send the On.
+    const build = /^v1\.0\.(\d+)/.exec(entity.getDevice?.()?.softwareBuildID ?? "");
+    return !build || Number(build[1]) < FIRST_BUILD_TURNING_ON_FROM_LEVEL;
+};
+const onOffBrightnessWithExplicitOn = {
+    ...tz.light_onoff_brightness,
+    convertSet: async (entity, key, value, meta) => {
+        const result = await tz.light_onoff_brightness.convertSet(entity, key, value, meta);
+        if (result?.state?.state === "ON" && result.state.brightness !== undefined && needsExplicitOn(entity)) {
+            await entity.command("genOnOff", "on", {}, utils.getOptions(meta.mapped, entity));
+        }
+        return result;
     },
 };
 
@@ -80,7 +104,7 @@ export default {
     model: "DL41-RGBCW",
     vendor: "Custom",
     description: "Oz Smart Things DL41 downlight on custom firmware (SM2235 RGBCW)",
-    toZigbee: [effectWithColorLoop, colorTempWithKelvin],
+    toZigbee: [effectWithColorLoop, colorTempWithKelvin, onOffBrightnessWithExplicitOn],
     fromZigbee: [colorTempKelvinFromDevice],
     exposes: [
         exposes.presets

@@ -280,6 +280,7 @@ bash ci/build.sh "$(cat firmware/VERSION)" out
 `ci/build.sh` does the following:
 1. **Runs the host tests:**
    - `test_sm2235.c` — frame waveforms;
+   - `test_light_control.c` — on/off and level commands against a simulated timer: OnOff, CurrentLevel and the LED output must agree;
    - `test_color_math.c` — HS/XY conversions and round trips, gamma encode/decode, perceptual blends, black-body detection, hue directions.
 2. **Fetches the pinned inputs:**
    - TC32 GCC v2.0 (SHA-256 `33b854be3e3db3dba4b4dacdda2cd4ea1c94dfd4d562864a095956de7991b430`, from pvvx/ZigbeeTLc at a pinned commit, vendor URL as fallback);

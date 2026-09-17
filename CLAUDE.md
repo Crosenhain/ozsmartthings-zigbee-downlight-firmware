@@ -2,17 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Custom Zigbee firmware for Oz Smart Things DL41 RGBCW downlights (Tuya ZTU module = Telink TLSR8258, Sunmoon SM2235 LED driver) for Zigbee2MQTT. User-facing procedures are in `README.md`; per-version design decisions and hardware test results are in `CHANGELOG.md` (add an entry for every firmware change).
+Custom Zigbee firmware for Oz Smart Things DL41 RGBCW downlights (Tuya ZTU module = Telink TLSR8258, Sunmoon SM2235 LED driver) for Zigbee2MQTT. User-facing procedures are in `README.md`; per-version design decisions and hardware test results are in `CHANGELOG.md` (add an entry for every firmware change). Docs, comments and identifiers use British spelling (colour, licence).
 
 ## Commands
 
-The firmware builds only on x86-64 Linux (or WSL). On this Windows machine, run bash through `wsl.exe -d Ubuntu-24.04`; the repo is at `/mnt/c/Users/.../ozsmartthings-zigbee-downlight-hacking` (path contains spaces, so quote it).
+The firmware builds only on x86-64 Linux (tc32 is an x86-64 Linux toolchain); it needs `gcc`, `make`, `python3`, `curl`, `git` and `bzip2`. The first build downloads the pinned toolchain and upstream into `~/.cache/dl41-build` and reuses them afterwards.
 
 ```bash
 # Full build: host tests, fetch pinned toolchain + upstream, patch, build, image checks
 bash ci/build.sh "$(cat firmware/VERSION)" out          # -> out/dl41_rgbcw_v1.0.<N>.bin/.elf
-# Faster with local copies (toolchain path must not contain spaces; the makefile doesn't quote it)
-TC32_DIR=~/dl41-build/toolchain/tc32 UPSTREAM_DIR=~/dl41-build/zigbee-light-cct bash ci/build.sh 11 /tmp/out
+# Reuse local copies instead of the cache (toolchain path must not contain spaces; the makefile doesn't quote it)
+TC32_DIR=~/dl41-build/toolchain/tc32 UPSTREAM_DIR=~/dl41-build/zigbee-light-cct bash ci/build.sh "$(cat firmware/VERSION)" /tmp/out
 # Prove a build is byte-identical to a known image
 REFERENCE_BIN=path/to/known.bin bash ci/build.sh 10 /tmp/out
 
@@ -20,13 +20,16 @@ REFERENCE_BIN=path/to/known.bin bash ci/build.sh 10 /tmp/out
 cd firmware/test
 gcc -std=gnu99 -Wall -I../src test_color_math.c ../src/color_math.c -o /tmp/tcm && /tmp/tcm
 gcc -std=gnu99 -Wall -Istub -I../src test_sm2235.c ../src/sm2235.c -o /tmp/tsm && /tmp/tsm
+gcc -std=gnu99 -Wall -Istub -I../src test_light_control.c ../src/light_control.c ../src/color_math.c -lm -o /tmp/tlc && /tmp/tlc
 
 # Packaging
 python tools/make_ota.py inspect FILE.zigbee
-python3 ci/package_release.py --bin out/dl41_rgbcw_v1.0.11.bin --build 11 --repo OWNER/REPO --out /tmp/rel
+python3 ci/package_release.py --bin out/dl41_rgbcw_v1.0.14.bin --build 14 --repo OWNER/REPO --out /tmp/rel   # --out must be empty
 ```
 
-There is no linter. Release: bump `firmware/VERSION`, commit on `main`, push an annotated tag `v1.0.N`; `release.yml` refuses tags that don't match `firmware/VERSION`, aren't on `main`, or aren't the highest `v1.0.*` tag.
+There is no linter. `firmware.yml` builds every push and pull request at `firmware/VERSION` and uploads the image as an artifact.
+
+Release: bump `firmware/VERSION`, commit on `main`, push an **annotated** tag `v1.0.N` (N ≥ 10, because releases ship a from_tuya image; the tag message becomes the release notes via `ci/release_notes.md.tmpl`). `release.yml` refuses tags that don't match `firmware/VERSION`, aren't on `main`, or aren't the highest `v1.0.*` tag. It publishes a **prerelease**; after the build has been tested on a light, promote it with `gh release edit v1.0.N --prerelease=false --latest` — `releases/latest` index URLs don't resolve until then.
 
 ## Architecture
 
@@ -34,6 +37,7 @@ There is no linter. Release: bump `firmware/VERSION`, commit on `main`, push an 
 The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee-light-cct) at the pinned commit `f7441cb4` (it bundles Telink Zigbee SDK V3.7.2.0). Then:
 - **`firmware/src/*`** is copied over upstream `src/`. A same-named file replaces the upstream one; every `.c` here is added to `project.mk` automatically.
 - **`firmware/apply_patches.py <tree> <N>`** makes text edits to upstream files: `main.c` hooks, APP_BUILD/image type in `version_cfg.h`, Green Power and Touchlink disabled, makefile fixes. At the end it asserts marker strings; **when adding or changing a patch, update its `expected` list**, or a changed upstream will silently skip the edit.
+  - It copies `firmware/src` first and patches afterwards, so a patch whose target is also one of our files edits **our** copy: `zb_ep_cfg.c`'s Touchlink guard is applied to it every build, and `hw_variants.h`'s DL41_TEST block is already present so that edit is a no-op. Editing those files can break a patch or its check.
 - **Build number and versions:** N is the one-byte `APP_BUILD`. The firmware is 1.0.N, the OTA file version is `0x10 N 30 01`, and `softwareBuildID` is `v1.0.NN` in decimal.
 - **Licence headers:** nine files in `firmware/src` are modified upstream copies, marked by a "Modified from nminaylov/zigbee-light-cct" header. Keep that header, and add it to any other upstream-derived file (Apache-2.0; see `NOTICE`).
 
@@ -58,6 +62,8 @@ The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee
   - **The SM2235 bus is write-only, with no ACK.** `light_output_push()` re-sends the final state 50 ms after changes stop and every 2 s while lit (`sm2235_refresh()`). On/off commands call `sm2235_invalidate()` so they always transmit. Keep that if you restructure output.
   - Colour fades are done in gamma-encoded space: HS is decoded per channel, timed XY fades use `color_blend`.
   - `light_mode_crossfade_start()` blends the last *shown* channels when switching between colour and white.
+  - **On/off vs level:** the OnOff attribute and the output gate (`out_enabled`) change only through `light_on_off_update()` (upstream `zcl_onoff.c`). `Off` fades `eff_level_256` and keeps CurrentLevel. Zigbee2MQTT sends every turn-on with a brightness or transition as a lone `MoveToLevelWithOnOff`, usually to the level the light already has, so "with on/off" ramps must turn on whenever they end above the minimum level (not only when the level rises), and only a downward ramp may turn off at the minimum level (`level_dir`). CHANGELOG 1.0.15.
+  - **`firmware/test/test_light_control.c`** runs the real file against a simulated timer wheel (`stub/tl_common.h`), with the upstream callers reduced to a few lines in the test. Add a case there for any change to the on/off, level or fade logic; to show a case catches a bug, compile it against `git show HEAD:firmware/src/light_control.c`.
 - **`zcl_color.c`:** ZCL command handlers.
   - `light_set_color_mode()` is the single place mode switches happen. Colour ↔ CT starts a crossfade and returns transition 0 for the new ramp. HS ↔ XY converts from `light_color_shown_rgb()`, so a switch mid-fade doesn't jump.
   - The colour loop (`ColorLoopSet`) is an endless hue ramp. Any other colour/CT command halts it first, except Stop Move Step.
@@ -77,17 +83,18 @@ The build takes [nminaylov/zigbee-light-cct](https://github.com/nminaylov/zigbee
 ### Zigbee2MQTT converter (`z2m/dl41_rgbcw.mjs`)
 - **`toZigbee` order:** converters listed in the definition's own `toZigbee` win over the `m.light()` extend's. This is how `effect: colorloop` is overridden to send `colorLoopSet`, and how `color_temp` / `color_temp_percent` / `color_temp_kelvin` go through one Kelvin-aware wrapper around `tz.light_colortemp`.
 - **Testing the converter:** there is no test in the repo. Check changes by `npm install zigbee-herdsman-converters` in a temp folder, copying the `.mjs` there, and calling `prepareDefinition()`, then a converter's `convertSet` with a mock endpoint.
+- **`onOffBrightnessWithExplicitOn`** replaces `tz.light_onoff_brightness` (same keys) and sends `On` after a turn-on with a brightness or transition, for lights whose `softwareBuildID` is below 1.0.15 (and for groups). It can go once no light runs 1.0.14 or earlier.
 - **Location:** the file must live in Z2M's `external_converters/`.
 - **`configureReporting: true` is required** on `m.light()`: it defaults to false, so without it Configure binds nothing, the device never reports state, and Z2M can only publish assumed state (breaks with the device's "optimistic" option off).
 - **`z2m/dl41_stock_ota.mjs`** copies Z2M's built-in stock definition (`_TZ3210_klsm24op` only) and adds `ota: true`. Z2M only checks devices with `definition.ota`, and external definitions take precedence over built-ins. Keep it in sync with upstream `src/devices/ozsmartthings.ts` if that changes.
-- **Update index:** releases ship `dl41_ota_index_all.json` (custom entry + filtered stock entry) because Z2M accepts one override index. Matching is zigbee-herdsman's `Device.findMatchingOtaImage`: first entry whose imageType/manufacturerCode/min-max version/modelId/manufacturerName all match.
+- **Update index:** `ci/package_release.py` writes `dl41_ota_index.json` (custom), `dl41_ota_index_from_tuya.json` (stock) and `dl41_ota_index_all.json` (both); releases point at the combined one because Z2M accepts only one override index. Matching is zigbee-herdsman's `Device.findMatchingOtaImage`: first entry whose imageType/manufacturerCode/min-max version/modelId/manufacturerName all match.
 - **No startup colour temperature:** Z2M's "previous" value (65535) exceeds herdsman's 65279 limit, so the option isn't exposed.
 
 ## Hardware and tools
 
 - **No hardware in the loop.** Firmware behaviour is verified by the user: an OTA upload through the Zigbee2MQTT frontend (about 35–40 min), then a report back. Don't claim hardware results that weren't reported.
 - **Safety:** the light's driver is likely non-isolated. SWS/UART tools are only for a module removed from the light (or a light fully off mains); never suggest wiring a mains-connected light.
-- **`tools/tcsw/*.py`** import each other by module name, so run them from `tools/tcsw/`.
+- **`tools/tcsw/*.py`** import each other by module name, so run them from `tools/tcsw/`. `tools/run_dumps.ps1` is a PowerShell wrapper (Windows only); elsewhere run `dump_flash.py` then `verify_dump.py` directly.
   - Proven link: CP2102 at 921600 baud, `--chunk 0x40 --no-sleep --partial`. FTDI FT232R adapters return silently corrupted reads.
   - Stock firmware disables SWS, so reading a stock module needs a manual RST→GND reset window (`--wait`). Custom firmware answers without a reset.
   - `diag_migration.py` is read-only (it halts the CPU). `write_flash_verified.py` writes flash: use `--dry-run` first and get the user's go-ahead.

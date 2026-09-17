@@ -41,6 +41,7 @@ static uint32_t on_off_fade_remaining = 0;
 static int32_t level_step_256 = 0;
 static uint32_t level_remaining_ticks = 0;
 static uint32_t level_compensation = 0;
+static int8_t level_dir = 0; //+1 up, -1 down, 0 no change. level_step_256 can't tell: it rounds to 0 on slow ramps
 static bool level_with_on_off = false;
 
 //color temperature ramp state; runs independently of the on/off and level ramps above
@@ -428,7 +429,7 @@ static int light_transition_timer_cb(void* arg) {
         if(level_remaining_ticks) {
             if((level_remaining_ticks != TRANSITION_TICKS_INFINITE) && (level_compensation >= level_remaining_ticks)) {
                 level_compensation = 0;
-                level_step_256 += (level_step_256 > 0) ? 1 : -1;
+                level_step_256 += level_dir;
             }
 
             light_level_apply_tick();
@@ -443,7 +444,8 @@ static int light_transition_timer_cb(void* arg) {
             }
         }
 
-        if(level_with_on_off && (p_level->cur_level <= ZCL_LEVEL_ATTR_MIN_LEVEL)) {
+        //only a downward ramp turns the light off at the minimum level: a turn-on ramp starts there
+        if(level_with_on_off && (level_dir < 0) && (p_level->cur_level <= ZCL_LEVEL_ATTR_MIN_LEVEL)) {
             light_on_off_update(ZCL_CMD_ONOFF_OFF);
         }
 
@@ -518,9 +520,36 @@ static void light_on_off_transition_start(bool turn_on) {
     light_transition_timer_sync();
 }
 
+//A level ramp is about to take over the shared timer from the on/off fade.
+//turn_on: a "with on/off" command that will light the LEDs (Zigbee2MQTT sends every ON that carries a brightness or a
+//transition as MoveToLevelWithOnOff, without a separate On)
+static void light_level_ramp_prepare(bool turn_on) {
+    ZclLevelAttr* p_level = ZCL_LEVEL_ATTR_GET();
+    ZclOnOffAttr* p_on_off = ZCL_ONOFF_ATTR_GET();
+
+    if(turn_on && (p_on_off->on_off == ZCL_ONOFF_STATUS_OFF)) {
+        //Off keeps CurrentLevel, so the target is usually the level the light already has. Ramp up from what is lit
+        //now (nothing, or the current brightness during a fade-out) instead of popping on at the old level.
+        uint8_t shown = out_enabled ? (uint8_t)(eff_level_256 >> 8) : 0;
+        p_level->cur_level = (shown > ZCL_LEVEL_ATTR_MIN_LEVEL) ? shown : ZCL_LEVEL_ATTR_MIN_LEVEL;
+    } else if((transition_mode == TRANSITION_ONOFF) && (on_off_fade_target_256 == 0)) {
+        //the fade-out can't finish once the level ramp owns the timer: gate the output off now, or the LEDs stay lit
+        //with OnOff = 0 (recalling a scene that is off sends Off, then a level)
+        hw_light_on_off_update(false);
+    }
+
+    if(transition_mode == TRANSITION_ONOFF) {
+        on_off_fade_remaining = 0;
+    }
+}
+
 //ramp curLevel toward targetLevel over transitionTimeZcl (ZCL 1/10s units); 0xFFFF -> use onOffTransitionTime, or as fast as possible
 void light_level_ramp_to_level(uint8_t target_level, uint16_t transition_time_zcl, bool with_on_off) {
     ZclLevelAttr* p_level = ZCL_LEVEL_ATTR_GET();
+
+    //"with on/off" lights the LEDs whenever it ends above the minimum level, not only when CurrentLevel rises
+    bool turn_on = with_on_off && (target_level > ZCL_LEVEL_ATTR_MIN_LEVEL);
+    light_level_ramp_prepare(turn_on);
 
     uint16_t zcl_time;
     if(transition_time_zcl == 0xFFFF) {
@@ -538,6 +567,7 @@ void light_level_ramp_to_level(uint8_t target_level, uint16_t transition_time_zc
 
     int32_t step_256 = ((int32_t)(target_level - p_level->cur_level)) << 8;
     level_step_256 = step_256 / (int32_t)level_remaining_ticks;
+    level_dir = (step_256 > 0) - (step_256 < 0);
 
     step_256 = (step_256 > 0) ? step_256 : -step_256;
     level_compensation = (uint32_t)(step_256 % (int32_t)level_remaining_ticks);
@@ -547,7 +577,7 @@ void light_level_ramp_to_level(uint8_t target_level, uint16_t transition_time_zc
     light_push_eff_level();
 
     if(with_on_off) {
-        if(level_step_256 > 0) {
+        if(turn_on) {
             light_on_off_update(ZCL_CMD_ONOFF_ON);
         } else if(p_level->cur_level <= ZCL_LEVEL_ATTR_MIN_LEVEL) {
             light_on_off_update(ZCL_CMD_ONOFF_OFF);
@@ -565,10 +595,13 @@ void light_level_ramp_to_level(uint8_t target_level, uint16_t transition_time_zc
 void light_level_ramp_at_rate(uint8_t rate, bool move_up, bool with_on_off) {
     ZclLevelAttr* p_level = ZCL_LEVEL_ATTR_GET();
 
+    light_level_ramp_prepare(with_on_off && move_up);
+
     transition_mode = TRANSITION_LEVEL;
     level_with_on_off = with_on_off;
     eff_level_256 = (uint16_t)p_level->cur_level << 8;
     level_step_256 = (((int32_t)rate) << 8) / ZCL_TRANSITION_TICKS_PER_SEC;
+    level_dir = move_up ? 1 : -1;
 
     if(move_up) {
         if(with_on_off) {
@@ -585,7 +618,7 @@ void light_level_ramp_at_rate(uint8_t rate, bool move_up, bool with_on_off) {
     light_couple_color_temp();
     light_push_eff_level();
 
-    if(with_on_off && (p_level->cur_level <= ZCL_LEVEL_ATTR_MIN_LEVEL)) {
+    if(with_on_off && !move_up && (p_level->cur_level <= ZCL_LEVEL_ATTR_MIN_LEVEL)) {
         light_on_off_update(ZCL_CMD_ONOFF_OFF);
     }
 
