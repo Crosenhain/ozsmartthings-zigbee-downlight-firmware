@@ -21,7 +21,7 @@ typedef struct {
     uint16_t led_off_time;
     uint8_t ori_sta; //original state before blink
     uint8_t sta; //current state in blink
-    uint8_t times; //blink times
+    uint16_t times; //blink times (16-bit: Identify time is 16-bit)
     uint8_t state;
     bool bdb_find_bind_flg;
     bool light_attrs_changed;

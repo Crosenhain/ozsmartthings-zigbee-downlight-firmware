@@ -61,6 +61,7 @@ HwConfig* hw_config_get(void) { return &cfg; }
 
 static uint16_t chip[SM2235_CHANNELS];
 static int went_dark; /* an all-zero frame was sent since this was last cleared */
+static int peak_sum; /* brightest frame sent since this was last cleared */
 
 static int chip_sum(void) { int s = 0; for (int i = 0; i < SM2235_CHANNELS; i++) s += chip[i]; return s; }
 void sm2235_init(uint32_t scl, uint32_t sda, uint8_t rgb, uint8_t cw) { memset(chip, 0, sizeof chip); }
@@ -68,6 +69,7 @@ int sm2235_set(const uint16_t out[SM2235_CHANNELS]) {
     if (!memcmp(chip, out, sizeof chip)) return 0;
     memcpy(chip, out, sizeof chip);
     if (!chip_sum()) went_dark = 1;
+    if (chip_sum() > peak_sum) peak_sum = chip_sum();
     return 1;
 }
 void sm2235_invalidate(void) {}
@@ -214,6 +216,30 @@ int main(void) {
     printf("On right after MoveToLevelWithOnOff (the converter's workaround for 1.0.14 and earlier)\n");
     boot_off(200); move_to_level(200, 0, 1); run_ms(30); on(); run_ms(1000); expect("ramp still running", 1, 200);
     boot_off(200); move_to_level(200, 0, 1); run_ms(500); on(); run_ms(1000); expect("ramp finished", 1, 200);
+
+    printf("blink: identify and network indication\n");
+    boot(1, 100); run_ms(1000);
+    int lit_sum = chip_sum();
+    peak_sum = 0; went_dark = 0;
+    light_blink_start(2, 200, 200); run_ms(2000);
+    check("  blink never renders above the set level", peak_sum <= lit_sum);
+    check("  blink goes dark in between", went_dark);
+    expect("blink(2, 200, 200) from on at level 100", 1, 100);
+
+    boot(1, 100); run_ms(1000); went_dark = 0;
+    light_join_indication(); run_ms(2000);
+    check("a join with no preceding search does not blink", !went_dark);
+
+    boot(1, 100); run_ms(1000); peak_sum = 0; went_dark = 0;
+    light_join_indication_arm(); light_join_indication(); run_ms(2000);
+    check("a join after a search does blink", went_dark);
+    check("  and not above the set level", peak_sum <= lit_sum);
+    expect("  and restores the light", 1, 100);
+
+    boot(1, 100); light_blink_start(300, 10, 10);
+    check("blink count is not truncated to 8 bits", light_ctx.times == 300);
+    light_blink_stop(); run_ms(1000);
+    expect("  light restored after light_blink_stop()", 1, 100);
 
     printf(errors ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", errors);
     return errors ? 1 : 0;

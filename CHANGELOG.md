@@ -3,6 +3,25 @@
 Firmware versions are `1.0.N`; the Zigbee OTA file version is `0x10 N 30 01`. Newest first.
 Hardware results come from lights running each build: first on a bench module, then installed on mains and updated over the air.
 
+## [1.0.16] — 2026-09-26
+
+**Fixed: lights flashed to full brightness at random.** Reported on lights running 1.0.14 after about a week: a light pulses on-off-on-off-on over roughly 0.8 s, the bright phase looking white, then returns to its previous state. Most noticeable on a light that was off, where both bright phases are visible. The blink code is unchanged in 1.0.15, so it is affected too.
+
+- **Cause, part one: the blink ignored the set brightness.** `light_blink_hw_set()` rendered its "on" phase at `ZCL_LEVEL_ATTR_MAX_LEVEL` (0xFE) instead of `cur_level`. In colour-temperature mode that puts both white channels at `PWM_MAX`, so every blink flashed full white whatever the light was set to - more than eight times the drive of a level of 100. The blink writes no ZCL attribute and marks nothing NV-dirty, so Zigbee2MQTT published nothing and showed no state change, which is why this left no trace in the logs.
+- **Cause, part two: the blink fired on silent rejoins.** Upstream indicates BDB commissioning success on the light itself (`zb_callbacks.c`, `light_blink_start(2, 200, 200)`), and the Telink SDK raises that same status for a stack-initiated rejoin (`bdb.c`, commented "for rejoin indication by the stack"). A light that lost and regained its parent therefore blinked as though it had just been paired. The DL41 has no status LED (`status_led_pin = PIN_NC`), so the main light is the only indicator upstream has.
+- **Fix:**
+  - `light_blink_hw_set()` renders at `cur_level`, never above it. The dark phases carry the indication, so a pairing blink stays visible at any brightness.
+  - New `light_join_indication_arm()` / `light_join_indication()` in `light_control.c`. `apply_patches.py` arms the indication where upstream starts the 3x "searching" blink, and routes the commissioning-success blink through `light_join_indication()`. Only a join that followed a visible search blinks; a silent rejoin is now silent.
+- **Consequence worth knowing:** rejoins no longer announce themselves on the ceiling. Each flash had been a real mesh dropout, so watch the Zigbee2MQTT log instead (`zh:controller` at debug, with `last_seen: ISO_8601`). Contributing factors not addressed here: `zb_callbacks.c` issues `zb_rejoinReq()` on every `BAD_KEY_SEQUENCE_NUMBER` with no rate limit, and the SDK's `flash_mspi_write_ram` disables interrupts for the whole of each NV page write and sector erase, which can cost the device its link.
+
+**Fixed: Identify longer than 255 seconds blinked for the wrong duration.** `identify_time` is 16-bit, but `light_blink_start()` took a `uint8_t times`, so the value was truncated at the call site: an identify of 300 s stopped blinking after about 44 s, and any multiple of 256 became 0, which blinks until stopped. `times` is now `uint16_t` in the prototype and in `AppCtx`.
+
+**Tests:** `test_light_control.c` gains blink coverage - the blink never renders above the set level, it does go dark, it restores the light, a join indication only blinks after a search, and the blink count is not truncated to 8 bits. Restoring either fix in a scratch copy makes the matching check fail (the brightness fix fails two, the 8-bit `times` one), so both are real guards.
+
+**Not changed, noted while investigating:** a blink still overwrites `eff_level_256` without stopping the shared transition timer, so one landing mid-ramp corrupts that ramp, and `light_blink_start()` captures `ori_sta` at the start, so an on/off command arriving mid-blink is restored to the stale state.
+
+**Hardware:** not yet tested on a light. The trigger is random, so confirming it needs an OTA and a report back over several days.
+
 ## [1.0.15] — 2026-09-18
 
 **Fixed: the light stays dark when it is turned on with a brightness** (Home Assistant `light.toggle` or `light.turn_on` with `brightness` / `brightness_pct`; turning off, and turning on without a brightness, worked).

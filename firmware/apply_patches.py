@@ -114,6 +114,19 @@ static const HwConfig hw_config_dl41_test = {
                          "#if TOUCHLINK_SUPPORT\n    ZCL_CLUSTER_TOUCHLINK_COMMISSIONING,\n#endif\n", 1)
     patch(os.path.join(src, "zb_ep_cfg.c"), ep_cfg)
 
+    # Upstream blinks the light on every BDB commissioning success, and the SDK raises that status
+    # for stack-initiated rejoins too, so a light that silently rejoined flashed. Route the
+    # indication through light_join_indication(), which only fires after a visible search.
+    def zb_callbacks(c):
+        if "light_join_indication" in c:
+            return c
+        c = c.replace("            light_blink_start(3, 200, 200);\n",
+                      "            light_blink_start(3, 200, 200);\n"
+                      "            light_join_indication_arm();\n", 1)
+        return c.replace("        light_blink_start(2, 200, 200);\n",
+                         "        light_join_indication();\n", 1)
+    patch(os.path.join(src, "zb_callbacks.c"), zb_callbacks)
+
     # Every edit above is a text replacement that silently does nothing if upstream changed: verify.
     expected = [
         ("makefile", "gp.mk removed: Green Power disabled"),
@@ -128,6 +141,8 @@ static const HwConfig hw_config_dl41_test = {
         ("src/app_cfg.h", "#define ZCL_GP_SUPPORT                  0"),
         ("src/app.c", "#if ZCL_GP_SUPPORT\n    gp_init"),
         ("src/zb_ep_cfg.c", "#if TOUCHLINK_SUPPORT\n    ZCL_CLUSTER_TOUCHLINK_COMMISSIONING"),
+        ("src/zb_callbacks.c", "light_join_indication_arm();"),
+        ("src/zb_callbacks.c", "light_join_indication();"),
     ]
     missing = [f"{f}: {text!r}" for f, text in expected if text not in open(os.path.join(root, f)).read()]
     if missing:

@@ -16,8 +16,16 @@ void light_init(void);
 void light_load_state(void);
 void light_refresh(LightSta sta);
 
-void light_blink_start(uint8_t times, uint16_t led_on_time, uint16_t led_off_time);
+/* times is the number of returns to the pre-blink state; 0 blinks until light_blink_stop().
+ * Kept 16-bit so an Identify time above 255 s is not truncated. */
+void light_blink_start(uint16_t times, uint16_t led_on_time, uint16_t led_off_time);
 void light_blink_stop(void);
+
+/* Network-join indication. arm() marks that this device is searching for a network, so the
+ * following commissioning success is a pairing and worth showing; light_join_indication() then
+ * blinks once and disarms. A stack-initiated rejoin never arms it and so stays silent. */
+void light_join_indication_arm(void);
+void light_join_indication(void);
 
 void light_level_ramp_to_level(uint8_t target_level, uint16_t transition_time_zcl, bool with_on_off);
 void light_level_ramp_at_rate(uint8_t rate, bool move_up, bool with_on_off);

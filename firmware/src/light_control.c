@@ -822,11 +822,13 @@ void light_refresh(LightSta sta) {
     light_ctx.light_attrs_changed = true;
 }
 
-static void light_blink_hw_set(bool on_off, bool restore) {
+/* The blink renders at the level the user set, never above it: the dark phases carry the signal.
+ * Upstream used ZCL_LEVEL_ATTR_MAX_LEVEL here, which flashed a dimmed light to full output
+ * (white in colour-temperature mode) on every blink. See CHANGELOG 1.0.16. */
+static void light_blink_hw_set(bool on_off) {
     ZclLevelAttr* p_level = ZCL_LEVEL_ATTR_GET();
 
-    uint16_t on_brightness = restore ? ((uint16_t)p_level->cur_level << 8) : (ZCL_LEVEL_ATTR_MAX_LEVEL << 8);
-    eff_level_256 = on_off ? on_brightness : 0;
+    eff_level_256 = on_off ? ((uint16_t)p_level->cur_level << 8) : 0;
     light_color_update();
     hw_light_on_off_update(on_off);
 }
@@ -836,10 +838,10 @@ static int light_blink_timer_evt_cb(void* arg) {
 
     light_ctx.sta = !light_ctx.sta;
     if(light_ctx.sta) {
-        light_blink_hw_set(true, false);
+        light_blink_hw_set(true);
         interval = light_ctx.led_on_time;
     } else {
-        light_blink_hw_set(false, false);
+        light_blink_hw_set(false);
         interval = light_ctx.led_off_time;
     }
 
@@ -847,7 +849,7 @@ static int light_blink_timer_evt_cb(void* arg) {
         if(light_ctx.times) {
             light_ctx.times--;
             if(light_ctx.times <= 0) {
-                light_blink_hw_set(light_ctx.ori_sta != 0, true);
+                light_blink_hw_set(light_ctx.ori_sta != 0);
 
                 light_ctx.timer_led_evt = NULL;
                 return -1;
@@ -858,7 +860,7 @@ static int light_blink_timer_evt_cb(void* arg) {
     return interval;
 }
 
-void light_blink_start(uint8_t times, uint16_t led_on_time, uint16_t led_off_time) {
+void light_blink_start(uint16_t times, uint16_t led_on_time, uint16_t led_off_time) {
     uint32_t interval = 0;
     ZclOnOffAttr* p_on_off = ZCL_ONOFF_ATTR_GET();
 
@@ -881,8 +883,26 @@ void light_blink_stop(void) {
         TL_ZB_TIMER_CANCEL(&light_ctx.timer_led_evt);
 
         light_ctx.times = 0;
-        light_blink_hw_set(light_ctx.ori_sta != 0, true);
+        light_blink_hw_set(light_ctx.ori_sta != 0);
     }
+}
+
+/* Upstream indicates every BDB commissioning success on the light. The SDK also raises that status
+ * for a stack-initiated rejoin (bdb.c, "for rejoin indication by the stack"), so a light that
+ * silently lost and regained its parent blinked as if it had just been paired. Indicate only a join
+ * that followed a visible search, which is a real pairing. */
+static bool join_indication_armed = false;
+
+void light_join_indication_arm(void) {
+    join_indication_armed = true;
+}
+
+void light_join_indication(void) {
+    if(!join_indication_armed) {
+        return;
+    }
+    join_indication_armed = false;
+    light_blink_start(2, 200, 200);
 }
 
 void light_load_state(void) {
